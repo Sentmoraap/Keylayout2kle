@@ -1,0 +1,7 @@
+build/
+*.gch
+*.swp
+*.vim
+.vs
+.vscode
+tags
