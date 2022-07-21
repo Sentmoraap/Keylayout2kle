@@ -8,7 +8,7 @@
 #define CHAR(X) (reinterpret_cast<const char*>(X))
 #define ITERATE_CHILDREN(NODE, VAR, STR) for(const xmlNode *VAR = findNextChild(NODE->children, STR); VAR; \
         VAR = findNextChild(VAR->next, STR))
-
+#define ATTR_IS(NODE, ATTR, VAL) (strcmp(CHAR(xmlGetProp(NODE, ATTR ## _x)), VAL) == 0)
 
 const xmlChar *operator "" _x(const char* s, size_t len)
 {
@@ -16,6 +16,7 @@ const xmlChar *operator "" _x(const char* s, size_t len)
 }
 
 const xmlNode *keyboardNode;
+const xmlNode *actions;
 
 const xmlNode *findNextChild(const xmlNode *node, const char *nodeName)
 {
@@ -24,21 +25,14 @@ const xmlNode *findNextChild(const xmlNode *node, const char *nodeName)
     return node;
 }
 
-/*const xmlNode *findAttribute(const xmlNode *node, const char *attributeName)
-{
-    const xmlNode *child = node->children;
-    while(child && child->type != XML_ATTRIBUTE_NODE && strcmp(CHAR(child->name), attributeName))
-            child = child->next;
-    return child;
-}*/
-
 const char *keyOutput(uint8_t keyCode, uint8_t mapIndex)
 {
     const char *usedKeymap = "ISO"; // To be replaced with a setting
+    const char *usedState = "none"; // ditto
     const xmlChar *keyAction = nullptr;
     ITERATE_CHILDREN(keyboardNode, keyMapSet, "keyMapSet")
     {
-        if(strcmp(CHAR(xmlGetProp(keyMapSet, "id"_x)), usedKeymap)) continue;
+        if(!ATTR_IS(keyMapSet, "id", usedKeymap)) continue;
         // TODO: use baseMapSet
         ITERATE_CHILDREN(keyMapSet, keyMap, "keyMap")
         {
@@ -48,7 +42,7 @@ const char *keyOutput(uint8_t keyCode, uint8_t mapIndex)
             {
                 if(atoi(CHAR(xmlGetProp(key, "code"_x))) == keyCode)
                 {
-                    const xmlChar *output = xmlGetProp(key, "action"_x);//"output"_x);
+                    const xmlChar *output = xmlGetProp(key, "output"_x);
                     if(output) return CHAR(output);
                     keyAction = xmlGetProp(key, "action"_x);
                     break;
@@ -56,10 +50,20 @@ const char *keyOutput(uint8_t keyCode, uint8_t mapIndex)
             }
             break;
         }
+        break;
     }
-    if(keyAction)
+    if(keyAction) ITERATE_CHILDREN(actions, actionSet, "action")
     {
-        // TODO
+        if(!ATTR_IS(actionSet, "id", CHAR(keyAction))) continue;
+        ITERATE_CHILDREN(actionSet, action, "when")
+        {
+            if(!ATTR_IS(action, "state", usedState)) continue;
+            const xmlChar *output = xmlGetProp(action, "output"_x);
+            if(output) return CHAR(output);
+            // TODO: dead keys
+            break;
+        }
+        break;
     }
     return nullptr;
 }
@@ -83,6 +87,8 @@ int main(int argc, char **argv)
     }
     keyboardNode = rootNode->children;
     while(keyboardNode->type != XML_ELEMENT_NODE) keyboardNode = keyboardNode->next;
+    actions = findNextChild(keyboardNode->children, "actions");
+
 
     nlohmann::json kleKeyboard = nlohmann::json::parse(std::ifstream(argv[2]));
     nlohmann::json outJson = nlohmann::json::array();
