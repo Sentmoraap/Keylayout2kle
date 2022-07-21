@@ -25,19 +25,18 @@ const xmlNode *findNextChild(const xmlNode *node, const char *nodeName)
     return node;
 }
 
-const char *keyOutput(uint8_t keyCode, uint8_t mapIndex)
+const char *keyOutput(uint8_t keyCode, const char *mapName, uint8_t mapIndex)
 {
-    const char *usedKeymap = "ISO"; // To be replaced with a setting
-    const char *usedState = "none"; // ditto
+    const char *usedState = "none"; // To be replaced with a setting
     const xmlChar *keyAction = nullptr;
+    const xmlNode *foundKeyMap = nullptr;
     ITERATE_CHILDREN(keyboardNode, keyMapSet, "keyMapSet")
     {
-        if(!ATTR_IS(keyMapSet, "id", usedKeymap)) continue;
-        // TODO: use baseMapSet
+        if(!ATTR_IS(keyMapSet, "id", mapName)) continue;
         ITERATE_CHILDREN(keyMapSet, keyMap, "keyMap")
         {
             if(atoi(CHAR(xmlGetProp(keyMap, "index"_x))) != mapIndex) continue;
-
+            foundKeyMap = keyMap;
             ITERATE_CHILDREN(keyMap, key, "key")
             {
                 if(atoi(CHAR(xmlGetProp(key, "code"_x))) == keyCode)
@@ -64,6 +63,15 @@ const char *keyOutput(uint8_t keyCode, uint8_t mapIndex)
             break;
         }
         break;
+    }
+    else if(foundKeyMap)
+    {
+        const xmlChar *baseMapSet = xmlGetProp(foundKeyMap, "baseMapSet"_x);
+        if(baseMapSet)
+        {
+            uint8_t baseIndex = static_cast<uint8_t>(atoi(CHAR(xmlGetProp(foundKeyMap, "baseIndex"_x))));
+            return keyOutput(keyCode, CHAR(baseMapSet), baseIndex);
+        }
     }
     return nullptr;
 }
@@ -165,7 +173,7 @@ int main(int argc, char **argv)
                 auto it = name2Keycode.find(str);
                 if(it != name2Keycode.end())
                 {
-                    const char *c = keyOutput(it->second, 0);
+                    const char *c = keyOutput(it->second, "ISO", 0);
                     if(c) str = c;
                 }
                 if(keyProperties.type() != nlohmann::json::value_t::null) outRow.push_back(keyProperties);
