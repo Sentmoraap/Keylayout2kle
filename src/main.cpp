@@ -76,11 +76,17 @@ const char *keyOutput(uint8_t keyCode, const char *mapName, uint8_t mapIndex)
     return nullptr;
 }
 
+void error(const char *err)
+{
+    std::cerr << err << std::endl;
+    exit(-1);
+}
+
 int main(int argc, char **argv)
 {
-    if(argc < 3)
+    if(argc < 4)
     {
-        std::cerr << "Usage: " << argv[0] << "<keyLayout file> <kle json file>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << "<keyLayout file> <kle json file> <settings json file>" << std::endl;
         return -1;
     }
 
@@ -88,11 +94,8 @@ int main(int argc, char **argv)
 
     const xmlDoc *rootNode = xmlReadFile(argv[1], nullptr,
             XML_PARSE_RECOVER | XML_PARSE_NOERROR | XML_PARSE_NOWARNING | XML_PARSE_NONET);
-    if(!rootNode)
-    {
-        std::cerr << "Xml parse fail" << std::endl;
-        return -1;
-    }
+    if(!rootNode) error("Xml parse fail");
+
     keyboardNode = rootNode->children;
     while(keyboardNode->type != XML_ELEMENT_NODE) keyboardNode = keyboardNode->next;
     actions = findNextChild(keyboardNode->children, "actions");
@@ -100,6 +103,11 @@ int main(int argc, char **argv)
 
     nlohmann::json kleKeyboard = nlohmann::json::parse(std::ifstream(argv[2]));
     nlohmann::json outJson = nlohmann::json::array();
+
+    nlohmann::json settings = nlohmann::json::parse(std::ifstream(argv[3]));
+    if(!settings.contains("keyMapSet")) error("Settings does not contain keyMapSet");
+    std::string usedKeyMapSet = settings.at("keyMapSet").get<std::string>();
+
 
     // Keycodes of ISO keyboards, strings based on UK QWERTY
     std::unordered_map<std::string, uint8_t> name2Keycode =
@@ -173,7 +181,7 @@ int main(int argc, char **argv)
                 auto it = name2Keycode.find(str);
                 if(it != name2Keycode.end())
                 {
-                    const char *c = keyOutput(it->second, "ISO", 0);
+                    const char *c = keyOutput(it->second, usedKeyMapSet.c_str(), 0);
                     if(c) str = c;
                 }
                 if(keyProperties.type() != nlohmann::json::value_t::null) outRow.push_back(keyProperties);
