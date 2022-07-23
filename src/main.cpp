@@ -3,6 +3,8 @@
 #include <unordered_map>
 #include <stdint.h>
 #include <libxml/parser.h>
+#include <unicode/unistr.h>
+#include <unicode/brkiter.h>
 #include "nlohmann/json.hpp"
 
 #define CHAR(X) (reinterpret_cast<const char*>(X))
@@ -220,10 +222,24 @@ int main(int argc, char **argv)
                         }
                     }
                     str = "";
-                    for(uint8_t i = 0; i < keyNumLegends; i++)
+                    for(uint8_t iLegend = 0; iLegend < keyNumLegends; iLegend++)
                     {
-                        str += legends[i];
-                        str += "\ufe0e";
+                        icu::UnicodeString us(legends[iLegend].c_str());
+                        UErrorCode error = U_ZERO_ERROR;
+                        icu::BreakIterator *bi =
+                                icu::BreakIterator::createCharacterInstance(icu::Locale::getDefault(), error);
+                        bi->setText(us);
+                        // Add <span> tags around emojis
+                        for(int32_t p = bi->first(); p != icu::BreakIterator::DONE;)
+                        {
+                            int32_t next = bi->next();
+                            int32_t n = next == icu::BreakIterator::DONE ? us.length() : next;
+                            bool isEmoji = u_stringHasBinaryProperty(us.getBuffer() + p, n - p, UCHAR_RGI_EMOJI);
+                            if(isEmoji) str += "<span class=\"emoji\">";
+                            us.tempSubString(p, n - p).toUTF8String<std::string>(str);
+                            if(isEmoji) str += "</span>";
+                            p = next;
+                        }
                         str += '\n';
                     }
 
