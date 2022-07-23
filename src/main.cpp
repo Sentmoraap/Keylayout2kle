@@ -27,7 +27,8 @@ const xmlNode *findNextChild(const xmlNode *node, const char *nodeName)
     return node;
 }
 
-const char *keyOutput(uint8_t keyCode, const char *mapName, uint8_t mapIndex)
+// Legend, isDead
+std::pair<const char *, bool> keyOutput(uint8_t keyCode, const char *mapName, uint8_t mapIndex)
 {
     const char *usedState = "none"; // To be replaced with a setting
     const xmlChar *keyAction = nullptr;
@@ -44,7 +45,7 @@ const char *keyOutput(uint8_t keyCode, const char *mapName, uint8_t mapIndex)
                 if(atoi(CHAR(xmlGetProp(key, "code"_x))) == keyCode)
                 {
                     const xmlChar *output = xmlGetProp(key, "output"_x);
-                    if(output) return CHAR(output);
+                    if(output) return std::make_pair(CHAR(output), false);
                     keyAction = xmlGetProp(key, "action"_x);
                     break;
                 }
@@ -60,8 +61,10 @@ const char *keyOutput(uint8_t keyCode, const char *mapName, uint8_t mapIndex)
         {
             if(!ATTR_IS(action, "state", usedState)) continue;
             const xmlChar *output = xmlGetProp(action, "output"_x);
-            if(output) return CHAR(output);
-            // TODO: dead keys
+            if(output) return std::make_pair(CHAR(output), false);
+            const xmlChar *nextState = xmlGetProp(action, "next"_x);
+            if(nextState) return std::make_pair(CHAR(nextState), true);
+            // TODO: dead keys strings
             break;
         }
         break;
@@ -75,7 +78,7 @@ const char *keyOutput(uint8_t keyCode, const char *mapName, uint8_t mapIndex)
             return keyOutput(keyCode, CHAR(baseMapSet), baseIndex);
         }
     }
-    return nullptr;
+    return std::make_pair(nullptr, false);
 }
 
 void error(const std::string &err)
@@ -135,6 +138,8 @@ int main(int argc, char **argv)
         numLegends = std::max<uint8_t>(numLegends, mapSettings[i].place + 1);
         if(mapJson.contains("color")) map.color = mapJson.at("color").get<std::string>();
     }
+    std::string deadKeysColor;
+    if(settings.contains("deadKeysColor")) deadKeysColor = settings.at("deadKeysColor").get<std::string>();
 
     // Keycodes of ISO keyboards, strings based on UK QWERTY
     std::unordered_map<std::string, uint8_t> name2Keycode =
@@ -220,15 +225,18 @@ int main(int argc, char **argv)
 
                     for(uint8_t i = 0; i < numMaps; i++)
                     {
-                        const char *c = keyOutput(it->second, usedKeyMapSet.c_str(), mapSettings[i].index);
+                        const char *c;
+                        bool isDead;
+                        std::tie(c, isDead) = keyOutput(it->second, usedKeyMapSet.c_str(), mapSettings[i].index);
                         if(c)
                         {
                             keyNumLegends = std::max<uint8_t>(keyNumLegends, mapSettings[i].place + 1);
                             legends[mapSettings[i].place] = std::string(c);
-                            if(!mapSettings[i].color.empty())
+                            const std::string &color = isDead ? deadKeysColor : mapSettings[i].color;
+                            if(!color.empty())
                             {
                                keyNumColors = std::max<uint8_t>(keyNumColors, mapSettings[i].place + 1);
-                               colors[mapSettings[i].place] = mapSettings[i].color;
+                               colors[mapSettings[i].place] = color;
                             }
                         }
                     }
