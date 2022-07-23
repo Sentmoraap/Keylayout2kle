@@ -76,11 +76,17 @@ const char *keyOutput(uint8_t keyCode, const char *mapName, uint8_t mapIndex)
     return nullptr;
 }
 
-void error(const char *err)
+void error(const std::string &err)
 {
     std::cerr << err << std::endl;
     exit(-1);
 }
+
+struct MapSettings
+{
+    uint8_t index;
+    uint8_t place;
+};
 
 int main(int argc, char **argv)
 {
@@ -105,9 +111,26 @@ int main(int argc, char **argv)
     nlohmann::json outJson = nlohmann::json::array();
 
     nlohmann::json settings = nlohmann::json::parse(std::ifstream(argv[3]));
-    if(!settings.contains("keyMapSet")) error("Settings does not contain keyMapSet");
+    if(!settings.contains("keyMapSet")) error("Settings does not contain keyMapSet. Add a \"keyMapSet\":X where X is a "
+    "keyMapSet's node id attribute");
     std::string usedKeyMapSet = settings.at("keyMapSet").get<std::string>();
-
+    if(!settings.contains("maps") || !settings.at("maps").size()) error("Settings does not contain a non-empty maps "
+    "array");
+    uint8_t numMaps = settings.at("maps").size();
+    std::vector<MapSettings> mapSettings;
+    mapSettings.reserve(numMaps);
+    uint8_t numLegends = 0;
+    for(uint8_t i = 0; i < numMaps; i++)
+    {
+        nlohmann::json mapJson = settings.at("maps").at(i);
+        mapSettings.emplace_back();
+        MapSettings &map = mapSettings.back();
+        if(!mapJson.contains("index")) error(std::string("maps[") + std::to_string(i) + "] does not contain an index");
+        map.index = mapJson.at("index").get<uint8_t>();
+        if(!mapJson.contains("place")) error(std::string("maps[") + std::to_string(i) + "] does not contain a place");
+        map.place = mapJson.at("place").get<uint8_t>();
+        numLegends = std::max<uint8_t>(numLegends, mapSettings[i].place + 1);
+    }
 
     // Keycodes of ISO keyboards, strings based on UK QWERTY
     std::unordered_map<std::string, uint8_t> name2Keycode =
@@ -163,6 +186,8 @@ int main(int argc, char **argv)
         {"#SPACE", 0x31}
     };
 
+    std::vector<std::string> legends;
+    legends.reserve(numLegends);
     for(const nlohmann::json &row : kleKeyboard)
     {
         if(row.type() != nlohmann::json::value_t::array) outJson.push_back(row); // Not keycaps
@@ -177,12 +202,31 @@ int main(int argc, char **argv)
                     keyProperties = elem;
                     continue;
                 }
-                std::string str = elem;
+                std::string str = elem.get<std::string>();
                 auto it = name2Keycode.find(str);
                 if(it != name2Keycode.end())
                 {
-                    const char *c = keyOutput(it->second, usedKeyMapSet.c_str(), 0);
-                    if(c) str = c;
+                    legends.clear();
+                    legends.resize(numLegends);
+                    uint8_t keyNumLegends = 0;
+
+                    for(uint8_t i = 0; i < numMaps; i++)
+                    {
+                        const char *c = keyOutput(it->second, usedKeyMapSet.c_str(), mapSettings[i].index);
+                        if(c)
+                        {
+                            keyNumLegends = std::max<uint8_t>(keyNumLegends, mapSettings[i].place + 1);
+                            legends[mapSettings[i].place] = std::string(c);
+                        }
+                    }
+                    str = "";
+                    for(uint8_t i = 0; i < keyNumLegends; i++)
+                    {
+                        str += legends[i];
+                        str += "\ufe0e";
+                        str += '\n';
+                    }
+
                 }
                 if(keyProperties.type() != nlohmann::json::value_t::null) outRow.push_back(keyProperties);
                 keyProperties = nlohmann::json();
