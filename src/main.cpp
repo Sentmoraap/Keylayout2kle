@@ -88,6 +88,7 @@ struct MapSettings
 {
     uint8_t index;
     uint8_t place;
+    std::string color;
 };
 
 int main(int argc, char **argv)
@@ -132,6 +133,7 @@ int main(int argc, char **argv)
         if(!mapJson.contains("place")) error(std::string("maps[") + std::to_string(i) + "] does not contain a place");
         map.place = mapJson.at("place").get<uint8_t>();
         numLegends = std::max<uint8_t>(numLegends, mapSettings[i].place + 1);
+        if(mapJson.contains("color")) map.color = mapJson.at("color").get<std::string>();
     }
 
     // Keycodes of ISO keyboards, strings based on UK QWERTY
@@ -188,8 +190,9 @@ int main(int argc, char **argv)
         {"#SPACE", 0x31}
     };
 
-    std::vector<std::string> legends;
+    std::vector<std::string> legends, colors;
     legends.reserve(numLegends);
+    colors.reserve(numLegends);
     for(const nlohmann::json &row : kleKeyboard)
     {
         if(row.type() != nlohmann::json::value_t::array) outJson.push_back(row); // Not keycaps
@@ -210,7 +213,10 @@ int main(int argc, char **argv)
                 {
                     legends.clear();
                     legends.resize(numLegends);
+                    colors.clear();
+                    colors.resize(numLegends);
                     uint8_t keyNumLegends = 0;
+                    uint8_t keyNumColors = 0;
 
                     for(uint8_t i = 0; i < numMaps; i++)
                     {
@@ -219,6 +225,11 @@ int main(int argc, char **argv)
                         {
                             keyNumLegends = std::max<uint8_t>(keyNumLegends, mapSettings[i].place + 1);
                             legends[mapSettings[i].place] = std::string(c);
+                            if(!mapSettings[i].color.empty())
+                            {
+                               keyNumColors = std::max<uint8_t>(keyNumColors, mapSettings[i].place + 1);
+                               colors[mapSettings[i].place] = mapSettings[i].color;
+                            }
                         }
                     }
                     str = "";
@@ -242,7 +253,16 @@ int main(int argc, char **argv)
                         }
                         str += '\n';
                     }
-
+                    if(keyNumColors)
+                    {
+                        std::string colorStr;
+                        for(uint8_t iColor = 0; iColor < keyNumColors; iColor++)
+                        {
+                            colorStr += colors[iColor];
+                            colorStr += "\n";
+                        }
+                        keyProperties["t"] = colorStr;
+                    }
                 }
                 if(keyProperties.type() != nlohmann::json::value_t::null) outRow.push_back(keyProperties);
                 keyProperties = nlohmann::json();
