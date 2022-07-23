@@ -152,6 +152,8 @@ int main(int argc, char **argv)
                 );
         states.push_back(stateJson.at("state").get<std::string>());
     }
+    float stateDy = 0;
+    if(settings.contains("stateDy")) stateDy = settings.at("stateDy").get<float>();
 
 
     // Keycodes of ISO keyboards, strings based on UK QWERTY
@@ -211,19 +213,22 @@ int main(int argc, char **argv)
     std::vector<std::string> legends, colors;
     legends.reserve(numLegends);
     colors.reserve(numLegends);
+    bool firstState = true;
     for(const std::string &state : states)
     {
+        bool firstRow = true;
         for(const nlohmann::json &row : kleKeyboard)
         {
             if(row.type() != nlohmann::json::value_t::array)
             {
                 // First row isn't keycaps. Output it only the first time
-                if(&state == states.data()) outJson.push_back(row);
+                if(firstState) outJson.push_back(row);
             }
             else
             {
                 nlohmann::json outRow = nlohmann::json::array();
                 nlohmann::json keyProperties;
+                bool firstElem = true;
                 for(const nlohmann::json &elem : row)
                 {
                     if(elem.type() == nlohmann::json::value_t::object)
@@ -292,13 +297,17 @@ int main(int argc, char **argv)
                             keyProperties["t"] = colorStr;
                         }
                     }
+                    if(firstElem && firstRow && !firstState) keyProperties["y"] = stateDy;
                     if(keyProperties.type() != nlohmann::json::value_t::null) outRow.push_back(keyProperties);
                     keyProperties = nlohmann::json();
                     outRow.push_back(str);
+                    firstElem = false;
                 }
                 outJson.push_back(outRow);
+                firstRow = false;
             }
         }
+        firstState = false;
     }
 
 
