@@ -6,6 +6,7 @@
 #include <unicode/unistr.h>
 #include <unicode/brkiter.h>
 #include "nlohmann/json.hpp"
+#include "StrHash.hpp"
 
 #define CHAR(X) (reinterpret_cast<const char*>(X))
 #define ITERATE_CHILDREN(NODE, VAR, STR) for(const xmlNode *VAR = findNextChild(NODE->children, STR); VAR; \
@@ -93,6 +94,12 @@ struct LegendSettings
     std::string color;
 };
 
+struct StateSettings
+{
+    std::string state;
+    std::string display;
+};
+
 int main(int argc, char **argv)
 {
     if(argc < 4)
@@ -143,14 +150,18 @@ int main(int argc, char **argv)
     if(!settings.contains("states") || !settings.at("states").size()) error("Settings does not contain a non-empty "
             "states array");
     uint8_t numStates = settings.at("states").size();
-    std::vector<std::string> states;
-    states.reserve(numStates);
+    std::vector<StateSettings> stateSettings;
+    stateSettings.reserve(numStates);
     for(uint8_t i = 0; i < numStates; i++)
     {
         nlohmann::json stateJson = settings.at("states").at(i);
+        stateSettings.emplace_back();
+        StateSettings &state = stateSettings.back();
         if(!stateJson.contains("state")) error(std::string("state[") + std::to_string(i) + "] does not contain a state"
                 );
-        states.push_back(stateJson.at("state").get<std::string>());
+        state.state = stateJson.at("state").get<std::string>();
+        if(stateJson.contains("display")) state.display = stateJson.at("display").get<std::string>();
+        else state.display = state.state;
     }
     float stateDy = 0;
     if(settings.contains("stateDy")) stateDy = settings.at("stateDy").get<float>();
@@ -213,16 +224,16 @@ int main(int argc, char **argv)
     std::vector<std::string> legends, colors;
     legends.reserve(numLegends);
     colors.reserve(numLegends);
-    bool firstState = true;
-    for(const std::string &state : states)
+    for(uint8_t iState = 0; iState < numStates; iState++)
     {
+        StateSettings &state = stateSettings[iState];
         bool firstRow = true;
         for(const nlohmann::json &row : kleKeyboard)
         {
             if(row.type() != nlohmann::json::value_t::array)
             {
                 // First row isn't keycaps. Output it only the first time
-                if(firstState) outJson.push_back(row);
+                if(!iState) outJson.push_back(row);
             }
             else
             {
@@ -237,67 +248,101 @@ int main(int argc, char **argv)
                         continue;
                     }
                     std::string str = elem.get<std::string>();
-                    auto it = name2Keycode.find(str);
-                    if(it != name2Keycode.end())
+                    if(str[0] == '#')
                     {
-                        legends.clear();
-                        legends.resize(numLegends);
-                        colors.clear();
-                        colors.resize(numLegends);
-                        uint8_t keyNumLegends = 0;
-                        uint8_t keyNumColors = 0;
-
-                        for(uint8_t i = 0; i < numMaps; i++)
+                        // Labels based on layout
+                        auto it = name2Keycode.find(str);
+                        if(it != name2Keycode.end())
                         {
-                            const char *c;
-                            bool isDead;
-                            std::tie(c, isDead) = keyOutput(it->second, usedKeyMapSet.c_str(), state.c_str(),
-                                    legendSettings[i].index);
-                            if(c)
+                            legends.clear();
+                            legends.resize(numLegends);
+                            colors.clear();
+                            colors.resize(numLegends);
+                            uint8_t keyNumLegends = 0;
+                            uint8_t keyNumColors = 0;
+
+                            for(uint8_t i = 0; i < numMaps; i++)
                             {
-                                keyNumLegends = std::max<uint8_t>(keyNumLegends, legendSettings[i].place + 1);
-                                legends[legendSettings[i].place] = std::string(c);
-                                const std::string &color = isDead ? deadKeysColor : legendSettings[i].color;
-                                if(!color.empty())
+                                const char *c;
+                                bool isDead;
+                                std::tie(c, isDead) = keyOutput(it->second, usedKeyMapSet.c_str(), state.state.c_str(),
+                                        legendSettings[i].index);
+                                if(c)
                                 {
-                                keyNumColors = std::max<uint8_t>(keyNumColors, legendSettings[i].place + 1);
-                                colors[legendSettings[i].place] = color;
+                                    keyNumLegends = std::max<uint8_t>(keyNumLegends, legendSettings[i].place + 1);
+                                    legends[legendSettings[i].place] = std::string(c);
+                                    const std::string &color = isDead ? deadKeysColor : legendSettings[i].color;
+                                    if(!color.empty())
+                                    {
+                                    keyNumColors = std::max<uint8_t>(keyNumColors, legendSettings[i].place + 1);
+                                    colors[legendSettings[i].place] = color;
+                                    }
                                 }
                             }
-                        }
-                        str = "";
-                        for(uint8_t iLegend = 0; iLegend < keyNumLegends; iLegend++)
-                        {
-                            icu::UnicodeString us(legends[iLegend].c_str());
-                            UErrorCode error = U_ZERO_ERROR;
-                            icu::BreakIterator *bi =
-                                    icu::BreakIterator::createCharacterInstance(icu::Locale::getDefault(), error);
-                            bi->setText(us);
-                            // Add <span> tags around emojis
-                            for(int32_t p = bi->first(); p != icu::BreakIterator::DONE;)
+                            str = "";
+                            for(uint8_t iLegend = 0; iLegend < keyNumLegends; iLegend++)
                             {
-                                int32_t next = bi->next();
-                                int32_t n = next == icu::BreakIterator::DONE ? us.length() : next;
-                                bool isEmoji = u_stringHasBinaryProperty(us.getBuffer() + p, n - p, UCHAR_RGI_EMOJI);
-                                if(isEmoji) str += "<span class=\"emoji\">";
-                                us.tempSubString(p, n - p).toUTF8String<std::string>(str);
-                                if(isEmoji) str += "</span>";
-                                p = next;
+                                icu::UnicodeString us(legends[iLegend].c_str());
+                                UErrorCode error = U_ZERO_ERROR;
+                                icu::BreakIterator *bi =
+                                        icu::BreakIterator::createCharacterInstance(icu::Locale::getDefault(), error);
+                                bi->setText(us);
+                                // Add <span> tags around emojis
+                                for(int32_t p = bi->first(); p != icu::BreakIterator::DONE;)
+                                {
+                                    int32_t next = bi->next();
+                                    int32_t n = next == icu::BreakIterator::DONE ? us.length() : next;
+                                    bool isEmoji = u_stringHasBinaryProperty(us.getBuffer() + p, n - p,
+                                            UCHAR_RGI_EMOJI);
+                                    if(isEmoji) str += "<span class=\"emoji\">";
+                                    us.tempSubString(p, n - p).toUTF8String<std::string>(str);
+                                    if(isEmoji) str += "</span>";
+                                    p = next;
+                                }
+                                str += '\n';
                             }
-                            str += '\n';
-                        }
-                        if(keyNumColors)
-                        {
-                            std::string colorStr;
-                            for(uint8_t iColor = 0; iColor < keyNumColors; iColor++)
+                            if(keyNumColors)
                             {
-                                colorStr += colors[iColor];
-                                colorStr += "\n";
+                                std::string colorStr;
+                                for(uint8_t iColor = 0; iColor < keyNumColors; iColor++)
+                                {
+                                    colorStr += colors[iColor];
+                                    colorStr += "\n";
+                                }
+                                keyProperties["t"] = colorStr;
                             }
-                            keyProperties["t"] = colorStr;
                         }
                     }
-                    if(firstElem && firstRow && !firstState) keyProperties["y"] = stateDy;
+                    else
+                    {
+                        // Find variables to replace
+                        for(size_t pos = str.find('$'); pos != std::string::npos; pos = str.find('$', ++pos))
+                        {
+                            StrHash hash;
+                            size_t end = pos + 1;
+                            while(str[end] >= 'A' && str[end] <= 'Z')
+                            {
+                                hash.hashCharacter(str[end]);
+                                end++;
+                            }
+                            bool replace = false;
+                            std::string replaceString;
+                            switch(hash)
+                            {
+                                case "STATE"_hash:
+                                    replace = true;
+                                    replaceString = stateSettings[iState].display;
+                                    break;
+                                case "PAGE"_hash:
+                                    replace = true;
+                                    replaceString = std::to_string(iState + 1);
+                                    break;
+                            }
+                            if(replace) str.replace(pos, end - pos, replaceString);
+                        }
+                    }
+
+                    if(firstElem && firstRow && iState) keyProperties["y"] = stateDy;
                     if(keyProperties.type() != nlohmann::json::value_t::null) outRow.push_back(keyProperties);
                     keyProperties = nlohmann::json();
                     outRow.push_back(str);
@@ -307,7 +352,6 @@ int main(int argc, char **argv)
                 firstRow = false;
             }
         }
-        firstState = false;
     }
 
 
