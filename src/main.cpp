@@ -98,6 +98,8 @@ struct StateSettings
 {
     std::string state;
     std::string display;
+    std::string legend;
+    bool show;
 };
 
 int main(int argc, char **argv)
@@ -162,10 +164,15 @@ int main(int argc, char **argv)
         state.state = stateJson.at("state").get<std::string>();
         if(stateJson.contains("display")) state.display = stateJson.at("display").get<std::string>();
         else state.display = state.state;
+        if(stateJson.contains("legend")) state.legend = stateJson.at("legend").get<std::string>();
+        else state.legend = state.state;
+        if(stateJson.contains("show")) state.show = stateJson.at("show").get<bool>();
+        else state.show = true;
     }
     float stateDy = 0;
     if(settings.contains("stateDy")) stateDy = settings.at("stateDy").get<float>();
-
+    std::unordered_map<std::string, const StateSettings*> stateLookup;
+    for(const StateSettings &state: stateSettings) stateLookup.emplace(std::make_pair(state.state, &state));
 
     // Keycodes of ISO keyboards, strings based on UK QWERTY
     std::unordered_map<std::string, uint8_t> name2Keycode =
@@ -224,9 +231,10 @@ int main(int argc, char **argv)
     std::vector<std::string> legends, colors;
     legends.reserve(numLegends);
     colors.reserve(numLegends);
-    for(uint8_t iState = 0; iState < numStates; iState++)
+    uint8_t iState = 0;
+    for(const StateSettings &state : stateSettings)
     {
-        StateSettings &state = stateSettings[iState];
+        if(!state.show) continue;
         bool firstRow = true;
         for(const nlohmann::json &row : kleKeyboard)
         {
@@ -270,12 +278,17 @@ int main(int argc, char **argv)
                                 if(c)
                                 {
                                     keyNumLegends = std::max<uint8_t>(keyNumLegends, legendSettings[i].place + 1);
+                                    if(isDead)
+                                    {
+                                        auto it = stateLookup.find(c);
+                                        if(it != stateLookup.end()) c = it->second->legend.c_str();
+                                    }
                                     legends[legendSettings[i].place] = std::string(c);
                                     const std::string &color = isDead ? deadKeysColor : legendSettings[i].color;
                                     if(!color.empty())
                                     {
-                                    keyNumColors = std::max<uint8_t>(keyNumColors, legendSettings[i].place + 1);
-                                    colors[legendSettings[i].place] = color;
+                                        keyNumColors = std::max<uint8_t>(keyNumColors, legendSettings[i].place + 1);
+                                        colors[legendSettings[i].place] = color;
                                     }
                                 }
                             }
@@ -329,14 +342,22 @@ int main(int argc, char **argv)
                             std::string replaceString;
                             switch(hash)
                             {
-                                case "STATE"_hash:
-                                    replace = true;
-                                    replaceString = stateSettings[iState].display;
-                                    break;
                                 case "PAGE"_hash:
                                     replace = true;
                                     replaceString = std::to_string(iState + 1);
                                     break;
+                                case "STATE"_hash:
+                                    replace = true;
+                                    replaceString = state.display;
+                                    break;
+                                case "LEGEND"_hash:
+                                {
+                                    replace = true;
+                                    auto it = stateLookup.find(state.state);
+                                    replaceString = it == stateLookup.end() ? state.state
+                                            : it->second->legend;
+                                    break;
+                                }
                             }
                             if(replace) str.replace(pos, end - pos, replaceString);
                         }
@@ -352,6 +373,7 @@ int main(int argc, char **argv)
                 firstRow = false;
             }
         }
+        iState++;
     }
 
 
