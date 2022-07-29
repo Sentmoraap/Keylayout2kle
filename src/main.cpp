@@ -300,6 +300,21 @@ int main(int argc, char **argv)
                                 icu::BreakIterator *bi =
                                         icu::BreakIterator::createCharacterInstance(icu::Locale::getDefault(), error);
                                 bi->setText(us);
+                                // Add dotted circle on combining characters
+                                if(us.countChar32() == 1)
+                                {
+                                    UChar32 c32 = us.char32At(0);
+                                    int8_t charCategory = u_charType(c32);
+                                    if(charCategory == U_NON_SPACING_MARK || charCategory == U_ENCLOSING_MARK
+                                        || charCategory == U_COMBINING_SPACING_MARK)
+                                    {
+                                        us.insert(0, 0x25cc);
+                                        uint8_t combiningClass = u_getCombiningClass(c32);
+                                        // Double diacritic, append another dotted circle
+                                        if(combiningClass == 233 || combiningClass == 234) us.append(0x25cc);
+                                    }
+                                }
+
                                 // Add <span> tags around emojis
                                 for(int32_t p = bi->first(); p != icu::BreakIterator::DONE;)
                                 {
