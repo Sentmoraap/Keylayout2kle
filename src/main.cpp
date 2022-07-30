@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <stdint.h>
 #include <libxml/parser.h>
 #include <unicode/unistr.h>
@@ -169,6 +170,9 @@ int main(int argc, char **argv)
         if(stateJson.contains("show")) state.show = stateJson.at("show").get<bool>();
         else state.show = true;
     }
+    std::unordered_map<std::string, std::string> substitutions;
+    if(settings.contains("substitutions"))
+            substitutions = settings.at("substitutions").get<std::unordered_map<std::string, std::string>>();
     float stateDy = 0;
     if(settings.contains("stateDy")) stateDy = settings.at("stateDy").get<float>();
     std::unordered_map<std::string, const StateSettings*> stateLookup;
@@ -229,6 +233,7 @@ int main(int argc, char **argv)
     };
 
     std::vector<std::string> legends, colors;
+    std::unordered_set<UChar32> nonGraphics;
     legends.reserve(numLegends);
     colors.reserve(numLegends);
     uint8_t iState = 0;
@@ -295,7 +300,10 @@ int main(int argc, char **argv)
                             str = "";
                             for(uint8_t iLegend = 0; iLegend < keyNumLegends; iLegend++)
                             {
-                                icu::UnicodeString us(legends[iLegend].c_str());
+                                std::string legend = legends[iLegend];
+                                auto it = substitutions.find(legend);
+                                if(it != substitutions.end()) legend = it->second;
+                                icu::UnicodeString us(legend.c_str());
                                 UErrorCode error = U_ZERO_ERROR;
                                 icu::BreakIterator *bi =
                                         icu::BreakIterator::createCharacterInstance(icu::Locale::getDefault(), error);
@@ -312,6 +320,17 @@ int main(int argc, char **argv)
                                         uint8_t combiningClass = u_getCombiningClass(c32);
                                         // Double diacritic, append another dotted circle
                                         if(combiningClass == 233 || combiningClass == 234) us.append(0x25cc);
+                                    }
+                                    if(!u_isgraph(c32) /*charCategory == U_SPACE_SEPARATOR*/ && nonGraphics.find(c32) == nonGraphics.end())
+                                    {
+                                        char charName[256];
+                                        u_charName(c32, U_UNICODE_CHAR_NAME, charName, 256, &error);
+                                        std::cerr << "Warning: character " << std::hex << c32
+                                        << " " << charName << " is non-graphic.";
+                                        if(nonGraphics.empty()) std::cerr << " Substitute this character to remove this"
+                                                " warning.";
+                                        std::cerr << std::endl;
+                                        nonGraphics.insert(c32);
                                     }
                                 }
 
