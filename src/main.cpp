@@ -316,12 +316,14 @@ int main(int argc, char **argv)
                                     if(charCategory == U_NON_SPACING_MARK || charCategory == U_ENCLOSING_MARK
                                         || charCategory == U_COMBINING_SPACING_MARK)
                                     {
+                                        us.insert(0, "</span>");
                                         us.insert(0, 0x25cc);
+                                        us.insert(0, "<span class=\"nongraphic\">");
                                         uint8_t combiningClass = u_getCombiningClass(c32);
                                         // Double diacritic, append another dotted circle
                                         if(combiningClass == 233 || combiningClass == 234) us.append(0x25cc);
                                     }
-                                    if(!u_isgraph(c32) /*charCategory == U_SPACE_SEPARATOR*/ && nonGraphics.find(c32) == nonGraphics.end())
+                                    if(!u_isgraph(c32) && nonGraphics.find(c32) == nonGraphics.end())
                                     {
                                         char charName[256];
                                         u_charName(c32, U_UNICODE_CHAR_NAME, charName, 256, &error);
@@ -397,7 +399,12 @@ int main(int argc, char **argv)
                         }
                     }
 
-                    if(firstElem && firstRow && iState) keyProperties["y"] = stateDy;
+                    if(firstElem && firstRow && iState)
+                    {
+                        keyProperties["y"] = stateDy;
+                        if(!keyProperties.contains("a")) keyProperties["a"] = 4;
+                        if(!keyProperties.contains("t")) keyProperties["t"] = "#000000";
+                    }
                     if(keyProperties.type() != nlohmann::json::value_t::null) outRow.push_back(keyProperties);
                     keyProperties = nlohmann::json();
                     outRow.push_back(str);
