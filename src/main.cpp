@@ -148,8 +148,6 @@ int main(int argc, char **argv)
         numLegends = std::max<uint8_t>(numLegends, legendSettings[i].place + 1);
         if(mapJson.contains("color")) map.color = mapJson.at("color").get<std::string>();
     }
-    std::string deadKeysColor;
-    if(settings.contains("deadKeysColor")) deadKeysColor = settings.at("deadKeysColor").get<std::string>();
     if(!settings.contains("states") || !settings.at("states").size()) error("Settings does not contain a non-empty "
             "states array");
     uint8_t numStates = settings.at("states").size();
@@ -264,8 +262,8 @@ int main(int argc, char **argv)
                     if(str[0] == '#')
                     {
                         // Labels based on layout
-                        auto it = name2Keycode.find(str);
-                        if(it != name2Keycode.end())
+                        auto keyCodeIt = name2Keycode.find(str);
+                        if(keyCodeIt != name2Keycode.end())
                         {
                             legends.clear();
                             legends.resize(numLegends);
@@ -278,18 +276,64 @@ int main(int argc, char **argv)
                             {
                                 const char *c;
                                 bool isDead;
-                                std::tie(c, isDead) = keyOutput(it->second, usedKeyMapSet.c_str(), state.state.c_str(),
-                                        legendSettings[i].index);
-                                if(c)
+                                std::tie(c, isDead) = keyOutput(keyCodeIt->second, usedKeyMapSet.c_str(),
+                                        state.state.c_str(), legendSettings[i].index);
+                                if(c && (!isDead || strcmp(c, state.state.c_str())))
                                 {
                                     keyNumLegends = std::max<uint8_t>(keyNumLegends, legendSettings[i].place + 1);
                                     if(isDead)
                                     {
-                                        auto it = stateLookup.find(c);
-                                        if(it != stateLookup.end()) c = it->second->legend.c_str();
+                                        // Check if it produces other dead keys when pressed multiple times.
+                                        // The legend shows chains and loops.
+                                        const char *deadKeyChain[3];
+                                        deadKeyChain[0] = c;
+                                        uint8_t numDead = 1;
+                                        while(numDead < 3)
+                                        {
+                                            std::tie(c, isDead) = keyOutput(keyCodeIt->second, usedKeyMapSet.c_str(),
+                                                    c, legendSettings[i].index);
+                                            if(isDead) deadKeyChain[numDead++] = c;
+                                            else break;
+                                        }
+                                        std::string &legend = legends[legendSettings[i].place];
+                                        bool zeroIs2 = false;
+                                        bool currentIs1 = false;
+                                        if(numDead > 2)
+                                        {
+                                            zeroIs2 = !strcmp(deadKeyChain[0], deadKeyChain[2]);
+                                            currentIs1 = !strcmp(state.state.c_str(), deadKeyChain[1]);
+                                            if(zeroIs2 && !currentIs1) legend += "<span class=\"nongraphic\">|</span>";
+
+                                        }
+                                        auto deadKeyLegend = [&stateLookup, &legend](const char *deadKeyStr)
+                                        {
+                                            const char *str = deadKeyStr;
+                                            auto stateIt = stateLookup.find(deadKeyStr);
+                                            if(stateIt != stateLookup.end()) str = stateIt->second->legend.c_str();
+                                            return std::string(str);
+                                        };
+                                        legend += "<span class=\"deadkey\">" + deadKeyLegend(deadKeyChain[0])
+                                            + "</span>";
+                                        if(numDead >= 2)
+                                        {
+                                            if(!strcmp(deadKeyChain[1], state.state.c_str())
+                                                || !strcmp(deadKeyChain[1], deadKeyChain[0]))
+                                                    legend += "<span class=\"nongraphic\">|</span>";
+                                            else
+                                            {
+                                                legend += "<span class=\"deadkey2\">" + deadKeyLegend(deadKeyChain[1])
+                                                    + "</span>";
+                                                if(numDead >= 3)
+                                                {
+                                                    if(!strcmp(state.state.c_str(), deadKeyChain[2]) || zeroIs2)
+                                                            legend += "<span class=\"nongraphic\">|</span>";
+                                                    else legend += "<span class=\"nongraphic\">·</span>";
+                                                }
+                                            }
+                                        }
                                     }
-                                    legends[legendSettings[i].place] = std::string(c);
-                                    const std::string &color = isDead ? deadKeysColor : legendSettings[i].color;
+                                    else legends[legendSettings[i].place] = std::string(c);
+                                    const std::string &color = legendSettings[i].color;
                                     if(!color.empty())
                                     {
                                         keyNumColors = std::max<uint8_t>(keyNumColors, legendSettings[i].place + 1);
