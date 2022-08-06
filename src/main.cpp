@@ -3,51 +3,39 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <stdint.h>
-#include <libxml/parser.h>
+#include <tinyxml2.h>
 #include <unicode/unistr.h>
 #include <unicode/brkiter.h>
 #include "nlohmann/json.hpp"
 #include "StrHash.hpp"
 
-#define CHAR(X) (reinterpret_cast<const char*>(X))
-#define ITERATE_CHILDREN(NODE, VAR, STR) for(const xmlNode *VAR = findNextChild(NODE->children, STR); VAR; \
-        VAR = findNextChild(VAR->next, STR))
-#define ATTR_IS(NODE, ATTR, VAL) (strcmp(CHAR(xmlGetProp(NODE, ATTR ## _x)), VAL) == 0)
+#define ITERATE_CHILDREN(NODE, VAR, STR) for(const tinyxml2::XMLElement *VAR = NODE->FirstChildElement(STR);\
+        VAR; VAR = VAR->NextSiblingElement(STR))
 
-const xmlChar *operator "" _x(const char* s, size_t len)
-{
-    return reinterpret_cast<const xmlChar*>(s);
-}
+const tinyxml2::XMLNode *keyboardNode;
+const tinyxml2::XMLNode *actions;
 
-const xmlNode *keyboardNode;
-const xmlNode *actions;
-
-const xmlNode *findNextChild(const xmlNode *node, const char *nodeName)
-{
-    while(node && (node->type != XML_ELEMENT_NODE || strcmp(CHAR(node->name), nodeName)))
-            node = node->next;
-    return node;
-}
 
 // Legend, isDead
 std::pair<const char *, bool> keyOutput(uint8_t keyCode, const char *mapName, const char *stateName, uint8_t mapIndex)
 {
-    const xmlChar *keyAction = nullptr;
-    const xmlNode *foundKeyMap = nullptr;
+
+    const char *keyAction = nullptr;
+    const tinyxml2::XMLElement *foundKeyMap = nullptr;
     ITERATE_CHILDREN(keyboardNode, keyMapSet, "keyMapSet")
     {
-        if(!ATTR_IS(keyMapSet, "id", mapName)) continue;
+        if(!keyMapSet->Attribute("id", mapName)) continue;
         ITERATE_CHILDREN(keyMapSet, keyMap, "keyMap")
         {
-            if(atoi(CHAR(xmlGetProp(keyMap, "index"_x))) != mapIndex) continue;
+            if(keyMap->IntAttribute("index") != mapIndex) continue;
             foundKeyMap = keyMap;
             ITERATE_CHILDREN(keyMap, key, "key")
             {
-                if(atoi(CHAR(xmlGetProp(key, "code"_x))) == keyCode)
+                if(key->IntAttribute("code") == keyCode)
                 {
-                    const xmlChar *output = xmlGetProp(key, "output"_x);
-                    if(output) return std::make_pair(CHAR(output), false);
-                    keyAction = xmlGetProp(key, "action"_x);
+                    const char *output = key->Attribute("output");
+                    if(output) return std::make_pair(output, false);
+                    keyAction = key->Attribute("action");
                     break;
                 }
             }
@@ -57,26 +45,25 @@ std::pair<const char *, bool> keyOutput(uint8_t keyCode, const char *mapName, co
     }
     if(keyAction) ITERATE_CHILDREN(actions, actionSet, "action")
     {
-        if(!ATTR_IS(actionSet, "id", CHAR(keyAction))) continue;
+        if(!actionSet->Attribute("id", keyAction)) continue;
         ITERATE_CHILDREN(actionSet, action, "when")
         {
-            if(!ATTR_IS(action, "state", stateName)) continue;
-            const xmlChar *output = xmlGetProp(action, "output"_x);
-            if(output) return std::make_pair(CHAR(output), false);
-            const xmlChar *nextState = xmlGetProp(action, "next"_x);
-            if(nextState) return std::make_pair(CHAR(nextState), true);
-            // TODO: dead keys strings
+            if(!action->Attribute("state", stateName)) continue;
+            const char *output = action->Attribute("output");
+            if(output) return std::make_pair(output, false);
+            const char *nextState = action->Attribute("next");
+            if(nextState) return std::make_pair(nextState, true);
             break;
         }
         break;
     }
     else if(foundKeyMap)
     {
-        const xmlChar *baseMapSet = xmlGetProp(foundKeyMap, "baseMapSet"_x);
+        const char *baseMapSet = foundKeyMap->Attribute("baseMapSet");
         if(baseMapSet)
         {
-            uint8_t baseIndex = static_cast<uint8_t>(atoi(CHAR(xmlGetProp(foundKeyMap, "baseIndex"_x))));
-            return keyOutput(keyCode, CHAR(baseMapSet), stateName, baseIndex);
+            uint8_t baseIndex = static_cast<uint8_t>(foundKeyMap->IntAttribute("baseIndex"));
+            return keyOutput(keyCode, baseMapSet, stateName, baseIndex);
         }
     }
     return std::make_pair(nullptr, false);
@@ -111,16 +98,15 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    LIBXML_TEST_VERSION
-
-    const xmlDoc *rootNode = xmlReadFile(argv[1], nullptr,
-            XML_PARSE_RECOVER | XML_PARSE_NOERROR | XML_PARSE_NOWARNING | XML_PARSE_NONET);
-    if(!rootNode) error("Xml parse fail");
-
-    keyboardNode = rootNode->children;
-    while(keyboardNode->type != XML_ELEMENT_NODE) keyboardNode = keyboardNode->next;
-    actions = findNextChild(keyboardNode->children, "actions");
-
+    tinyxml2::XMLDocument rootNode;
+    tinyxml2::XMLError xmlError;
+    xmlError = rootNode.LoadFile(argv[1]);
+    if(xmlError != tinyxml2::XML_SUCCESS)
+    {
+        error("Xml parse fail");
+    }
+    keyboardNode = rootNode.FirstChildElement();
+    actions = keyboardNode->FirstChildElement("actions");
 
     nlohmann::json kleKeyboard = nlohmann::json::parse(std::ifstream(argv[2]));
     nlohmann::json outJson = nlohmann::json::array();
