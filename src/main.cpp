@@ -6,6 +6,7 @@
 #include <tinyxml2.h>
 #include <unicode/unistr.h>
 #include <unicode/brkiter.h>
+#include <unicode/normlzr.h>
 #include "nlohmann/json.hpp"
 #include "StrHash.hpp"
 
@@ -79,6 +80,8 @@ struct LegendSettings
 {
     uint8_t index;
     uint8_t place;
+    uint8_t merge[2];
+    enum : uint8_t {NO, SAME, UPPERCASE, LOWERCASE} mergeType = NO;
     std::string color;
 };
 
@@ -127,10 +130,37 @@ int main(int argc, char **argv)
         nlohmann::json mapJson = settings.at("legends").at(i);
         legendSettings.emplace_back();
         LegendSettings &map = legendSettings.back();
-        if(!mapJson.contains("index")) error(std::string("maps[") + std::to_string(i) + "] does not contain an index");
-        map.index = mapJson.at("index").get<uint8_t>();
         if(!mapJson.contains("place")) error(std::string("maps[") + std::to_string(i) + "] does not contain a place");
         map.place = mapJson.at("place").get<uint8_t>();
+        if(mapJson.contains("merge"))
+        {
+            map.mergeType = LegendSettings::SAME;
+            map.merge[0] = mapJson.at("merge").at(0).get<uint8_t>();
+            map.merge[1] = mapJson.at("merge").at(1).get<uint8_t>();
+            if(mapJson.contains("mergeRule"))
+            {
+                StrHash mergeHash = StrHash::make(mapJson.at("mergeRule").get<std::string>());
+                switch(mergeHash)
+                {
+                    case "uppercase"_hash:
+                        map.mergeType = LegendSettings::UPPERCASE;
+                        break;
+                    case "lowercase"_hash:
+                        map.mergeType = LegendSettings::LOWERCASE;
+                        break;
+                    default:
+                        error(std::string("maps[") + std::to_string(i) + "]: unknown merge type"
+                                + mapJson.at("merge").at(2).get<std::string>());
+                        break;
+                }
+            }
+        }
+        if(map.mergeType == LegendSettings::NO)
+        {
+            if(!mapJson.contains("index"))
+                    error(std::string("maps[") + std::to_string(i) + "] does not contain an index");
+            map.index = mapJson.at("index").get<uint8_t>();
+        }
         numLegends = std::max<uint8_t>(numLegends, legendSettings[i].place + 1);
         if(mapJson.contains("color")) map.color = mapJson.at("color").get<std::string>();
     }
@@ -260,71 +290,124 @@ int main(int argc, char **argv)
 
                             for(uint8_t i = 0; i < numMaps; i++)
                             {
-                                const char *c;
-                                bool isDead;
-                                std::tie(c, isDead) = keyOutput(keyCodeIt->second, usedKeyMapSet.c_str(),
-                                        state.state.c_str(), legendSettings[i].index);
-                                if(c && (!isDead || strcmp(c, state.state.c_str())))
+                                switch(legendSettings[i].mergeType)
                                 {
-                                    keyNumLegends = std::max<uint8_t>(keyNumLegends, legendSettings[i].place + 1);
-                                    if(isDead)
+                                    case LegendSettings::NO:
                                     {
-                                        // Check if it produces other dead keys when pressed multiple times.
-                                        // The legend shows chains and loops.
-                                        const char *deadKeyChain[3];
-                                        deadKeyChain[0] = c;
-                                        uint8_t numDead = 1;
-                                        while(numDead < 3)
+                                        const char *c;
+                                        bool isDead;
+                                        std::tie(c, isDead) = keyOutput(keyCodeIt->second, usedKeyMapSet.c_str(),
+                                                state.state.c_str(), legendSettings[i].index);
+                                        if(c && (!isDead || strcmp(c, state.state.c_str())))
                                         {
-                                            std::tie(c, isDead) = keyOutput(keyCodeIt->second, usedKeyMapSet.c_str(),
-                                                    c, legendSettings[i].index);
-                                            if(isDead) deadKeyChain[numDead++] = c;
-                                            else break;
-                                        }
-                                        std::string &legend = legends[legendSettings[i].place];
-                                        bool zeroIs2 = false;
-                                        bool currentIs1 = false;
-                                        if(numDead > 2)
-                                        {
-                                            zeroIs2 = !strcmp(deadKeyChain[0], deadKeyChain[2]);
-                                            currentIs1 = !strcmp(state.state.c_str(), deadKeyChain[1]);
-                                            if(zeroIs2 && !currentIs1) legend += "<span class=\"nongraphic\">|</span>";
-
-                                        }
-                                        auto deadKeyLegend = [&stateLookup, &legend](const char *deadKeyStr)
-                                        {
-                                            const char *str = deadKeyStr;
-                                            auto stateIt = stateLookup.find(deadKeyStr);
-                                            if(stateIt != stateLookup.end()) str = stateIt->second->legend.c_str();
-                                            return std::string(str);
-                                        };
-                                        legend += "<span class=\"deadkey\">" + deadKeyLegend(deadKeyChain[0])
-                                            + "</span>";
-                                        if(numDead >= 2)
-                                        {
-                                            if(!strcmp(deadKeyChain[1], state.state.c_str())
-                                                || !strcmp(deadKeyChain[1], deadKeyChain[0]))
-                                                    legend += "<span class=\"nongraphic\">|</span>";
-                                            else
+                                            keyNumLegends = std::max<uint8_t>(keyNumLegends,
+                                                    legendSettings[i].place + 1);
+                                            if(isDead)
                                             {
-                                                legend += "<span class=\"deadkey2\">" + deadKeyLegend(deadKeyChain[1])
-                                                    + "</span>";
-                                                if(numDead >= 3)
+                                                // Check if it produces other dead keys when pressed multiple times.
+                                                // The legend shows chains and loops.
+                                                const char *deadKeyChain[3];
+                                                deadKeyChain[0] = c;
+                                                uint8_t numDead = 1;
+                                                while(numDead < 3)
                                                 {
-                                                    if(!strcmp(state.state.c_str(), deadKeyChain[2]) || zeroIs2)
+                                                    std::tie(c, isDead) = keyOutput(keyCodeIt->second,
+                                                            usedKeyMapSet.c_str(), c, legendSettings[i].index);
+                                                    if(isDead) deadKeyChain[numDead++] = c;
+                                                    else break;
+                                                }
+                                                std::string &legend = legends[legendSettings[i].place];
+                                                bool zeroIs2 = false;
+                                                bool currentIs1 = false;
+                                                if(numDead > 2)
+                                                {
+                                                    zeroIs2 = !strcmp(deadKeyChain[0], deadKeyChain[2]);
+                                                    currentIs1 = !strcmp(state.state.c_str(), deadKeyChain[1]);
+                                                    if(zeroIs2 && !currentIs1)
                                                             legend += "<span class=\"nongraphic\">|</span>";
-                                                    else legend += "<span class=\"nongraphic\">·</span>";
+
+                                                }
+                                                auto deadKeyLegend = [&stateLookup, &legend](const char *deadKeyStr)
+                                                {
+                                                    const char *str = deadKeyStr;
+                                                    auto stateIt = stateLookup.find(deadKeyStr);
+                                                    if(stateIt != stateLookup.end())
+                                                            str = stateIt->second->legend.c_str();
+                                                    return std::string(str);
+                                                };
+                                                legend += "<span class=\"deadkey\">" + deadKeyLegend(deadKeyChain[0])
+                                                    + "</span>";
+                                                if(numDead >= 2)
+                                                {
+                                                    if(!strcmp(deadKeyChain[1], state.state.c_str())
+                                                        || !strcmp(deadKeyChain[1], deadKeyChain[0]))
+                                                            legend += "<span class=\"nongraphic\">|</span>";
+                                                    else
+                                                    {
+                                                        legend += "<span class=\"deadkey2\">"
+                                                                + deadKeyLegend(deadKeyChain[1]) + "</span>";
+                                                        if(numDead >= 3)
+                                                        {
+                                                            if(!strcmp(state.state.c_str(), deadKeyChain[2]) || zeroIs2)
+                                                                    legend += "<span class=\"nongraphic\">|</span>";
+                                                            else legend += "<span class=\"nongraphic\">·</span>";
+                                                        }
+                                                    }
                                                 }
                                             }
+                                            else legends[legendSettings[i].place] = std::string(c);
+                                            const std::string &color = legendSettings[i].color;
+                                            if(!color.empty())
+                                            {
+                                                keyNumColors =
+                                                        std::max<uint8_t>(keyNumColors, legendSettings[i].place + 1);
+                                                colors[legendSettings[i].place] = color;
+                                            }
                                         }
+                                        break;
                                     }
-                                    else legends[legendSettings[i].place] = std::string(c);
-                                    const std::string &color = legendSettings[i].color;
-                                    if(!color.empty())
+                                    case LegendSettings::SAME:
+                                        if(legends[legendSettings[i].merge[0]] == legends[legendSettings[i].merge[1]])
+                                                goto merge;
+                                        break;
+                                    case LegendSettings::UPPERCASE:
                                     {
-                                        keyNumColors = std::max<uint8_t>(keyNumColors, legendSettings[i].place + 1);
-                                        colors[legendSettings[i].place] = color;
+                                        icu::UnicodeString str0(legends[legendSettings[i].merge[0]].c_str());
+                                        icu::UnicodeString str1(legends[legendSettings[i].merge[1]].c_str());
+                                        icu::UnicodeString str0Down = str0; str0Down.toLower();
+                                        icu::UnicodeString str1Up = str1; str1Up.toUpper();
+                                        if(!str0.compare(str1) || !str0Down.compare(str1) || !str0.compare(str1Up))
+                                                goto merge;
+                                        break;
                                     }
+                                    case LegendSettings::LOWERCASE:
+                                    {
+                                        icu::UnicodeString str0(legends[legendSettings[i].merge[0]].c_str());
+                                        icu::UnicodeString str1(legends[legendSettings[i].merge[1]].c_str());
+                                        icu::UnicodeString str0Up = str0; str0Up.toUpper();
+                                        icu::UnicodeString str1Down = str1; str1Down.toLower();
+                                        if(!str0.compare(str1) || !str0Up.compare(str1) || !str0.compare(str1Down))
+                                                goto merge;
+                                        break;
+                                    }
+                                    merge:
+                                    {
+                                        keyNumLegends = std::max<uint8_t>(keyNumLegends,
+                                                legendSettings[i].place + 1);
+                                        legends[legendSettings[i].place] =
+                                                std::move(legends[legendSettings[i].merge[0]]);
+                                        legends[legendSettings[i].merge[0]].clear();
+                                        legends[legendSettings[i].merge[1]].clear();
+                                        const std::string &color = legendSettings[i].color;
+                                        if(!color.empty())
+                                        {
+                                            keyNumColors =
+                                                    std::max<uint8_t>(keyNumColors, legendSettings[i].place + 1);
+                                            colors[legendSettings[i].place] = color;
+                                        }
+                                    break;
+                                    }
+
                                 }
                             }
                             str = "";
