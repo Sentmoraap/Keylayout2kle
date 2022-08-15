@@ -16,9 +16,42 @@
 const tinyxml2::XMLNode *keyboardNode;
 const tinyxml2::XMLNode *actions;
 
+struct ModifierSettings
+{
+    bool isUsed = false;
+    std::string prefix;
+};
+
+struct KeyWithLevel
+{
+    uint8_t mapIndex;
+    uint8_t keyCode;
+};
+
+struct LegendSettings
+{
+    uint8_t index;
+    uint8_t place;
+    uint8_t merge[2];
+    enum : uint8_t {NO, SAME, UPPERCASE, LOWERCASE} mergeType = NO;
+    std::string color;
+};
+
+struct StateSettings
+{
+    std::string state;
+    std::string display;
+    std::string legend;
+    bool show;
+};
+
+std::vector<ModifierSettings> modifierSettings;
+std::vector<StateSettings> stateSettings;
+std::unordered_map<std::string, const StateSettings*> stateLookup;
+std::unordered_map<std::string, std::string> substitutions;
 
 // Legend, isDead
-std::pair<const char *, bool> keyOutput(uint8_t keyCode, const char *mapName, const char *stateName, uint8_t mapIndex)
+std::pair<const char *, bool> keyOutput(const char *mapName, const char *stateName, uint8_t mapIndex, uint8_t keyCode)
 {
 
     const char *keyAction = nullptr;
@@ -64,10 +97,155 @@ std::pair<const char *, bool> keyOutput(uint8_t keyCode, const char *mapName, co
         if(baseMapSet)
         {
             uint8_t baseIndex = static_cast<uint8_t>(foundKeyMap->IntAttribute("baseIndex"));
-            return keyOutput(keyCode, baseMapSet, stateName, baseIndex);
+            return keyOutput(baseMapSet, stateName, baseIndex, keyCode);
         }
     }
     return std::make_pair(nullptr, false);
+}
+
+
+const char *actionState(const char *actionName)
+{
+    ITERATE_CHILDREN(actions, actionSet, "action")
+    {
+        if(!actionSet->Attribute("id", actionName)) continue;
+        ITERATE_CHILDREN(actionSet, action, "when")
+        {
+            if(!action->Attribute("state", "none")) continue;
+            if(action->Attribute("output")) return "";
+            return static_cast<const char*>(action->Attribute("next"));
+        }
+    }
+    return "";
+}
+
+std::vector<std::vector<KeyWithLevel>> findStatePath(const char *mapName, const char *stateName,
+        const std::unordered_set<std::string> &forbiddenStates = std::unordered_set<std::string>())
+{
+    // Outer: multiple paths, inner: a path with multiple keys
+    std::vector<std::vector<KeyWithLevel>> ret;
+    if(!strcmp(stateName, "none"))
+    {
+        ret.resize(1);
+        return ret;
+    }
+    std::unordered_set<std::string> newForbiddenStates = forbiddenStates;
+    newForbiddenStates.insert(stateName);
+    auto findKeys = [mapName, stateName, &ret, &forbiddenStates, &newForbiddenStates](bool fromRoot)
+    {
+        ITERATE_CHILDREN(keyboardNode, keyMapSet, "keyMapSet")
+        {
+            if(!keyMapSet->Attribute("id", mapName)) continue;
+            ITERATE_CHILDREN(keyMapSet, keyMap, "keyMap")
+            {
+                uint8_t mapIndex = static_cast<uint8_t>(keyMap->IntAttribute("index"));
+                if(mapIndex >= modifierSettings.size() || !modifierSettings[mapIndex].isUsed) continue;
+                auto processKeyMap = [fromRoot, mapName, stateName, &ret, &forbiddenStates, &newForbiddenStates]
+                        (const tinyxml2::XMLElement *keyMap, uint8_t mapIndex)
+                {
+                    ITERATE_CHILDREN(keyMap, key, "key")
+                    {
+                        uint8_t keyCode = static_cast<uint8_t>(key->IntAttribute("code"));
+                        if(key->Attribute("action"))
+                        {
+                            const char *actionName = key->Attribute("action");
+                            if(fromRoot)
+                            {
+                                const char *nextState = actionState(actionName);
+                                if(!strcmp(stateName, nextState))
+                                {
+                                    std::vector<KeyWithLevel> newPath;
+                                    newPath.push_back(KeyWithLevel{mapIndex, keyCode});
+                                    ret.push_back(newPath);
+                                }
+                            }
+                            else
+                            {
+                                ITERATE_CHILDREN(actions, actionSet, "action")
+                                {
+                                    if(!actionSet->Attribute("id", actionName)) continue;
+                                    ITERATE_CHILDREN(actionSet, action, "when")
+                                    {
+                                        if(action->Attribute("state", "none")) continue;
+                                        if(forbiddenStates.count(action->Attribute("state"))) continue;
+                                        if(action->Attribute("output")) continue;
+                                        if(action->Attribute("next", stateName))
+                                        {
+                                            std::vector<std::vector<KeyWithLevel>> paths =
+                                                    findStatePath(mapName, action->Attribute("state"),
+                                                    newForbiddenStates);
+                                            for(std::vector<KeyWithLevel> &vec : paths)
+                                            {
+                                                ret.push_back(std::move(vec));
+                                                ret.back().push_back(KeyWithLevel{mapIndex, keyCode});
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+                processKeyMap(keyMap, mapIndex);
+                const char *baseMapSet = keyMap->Attribute("baseMapSet");
+                if(baseMapSet)
+                {
+                    uint8_t baseIndex = static_cast<uint8_t>(keyMap->IntAttribute("baseIndex"));
+                    ITERATE_CHILDREN(keyboardNode, baseKeyMapSet, "keyMapSet")
+                    {
+                        if(!baseKeyMapSet->Attribute("id", baseMapSet)) continue;
+                        ITERATE_CHILDREN(baseKeyMapSet, baseKeyMap, "keyMap")
+                        {
+                            if(baseKeyMap->IntAttribute("index") != baseIndex) continue;
+                            processKeyMap(baseKeyMap, mapIndex);
+                        }
+                    }
+                }
+            }
+        }
+    };
+    findKeys(true);
+    if(ret.empty()) findKeys(false);
+    return ret;
+}
+
+std::string statePath2String(const char *mapName, const std::vector<std::vector<KeyWithLevel>>& paths)
+{
+    std::string ret;
+    uint8_t minLength = 255;
+    std::unordered_set<StrHash, StrHashIdentity> displayedPaths; // To remove duplicates
+    for(const std::vector<KeyWithLevel>& vec : paths) minLength = std::min(minLength, static_cast<uint8_t>(vec.size()));
+    for(const std::vector<KeyWithLevel>& vec : paths) if(vec.size() == minLength)
+    {
+        std::string pathStr;
+        const char *prevPrefix = "";
+        for(const KeyWithLevel& key : vec)
+        {
+            const char *prefix = modifierSettings[key.mapIndex].prefix.c_str();
+            if(strcmp(prefix, prevPrefix))
+            {
+                if(!pathStr.empty()) pathStr += " ";
+                pathStr += modifierSettings[key.mapIndex].prefix;
+            }
+            const char *outStr;
+            bool isDead;
+            std::tie(outStr, isDead) = keyOutput(mapName, "none", 0, key.keyCode);
+            if(isDead) pathStr += stateLookup.find(outStr)->second->legend;
+            else
+            {
+                auto it = substitutions.find(outStr);
+                if(it != substitutions.end()) pathStr += it->second;
+                else pathStr += outStr;
+            }
+            prevPrefix = prefix;
+        }
+        StrHash strHash = StrHash::make(pathStr);
+        if(displayedPaths.count(strHash)) continue;
+        displayedPaths.insert(strHash);
+        if(ret.size()) ret += " | ";
+        ret += pathStr;
+    }
+    return ret;
 }
 
 void error(const std::string &err)
@@ -75,23 +253,6 @@ void error(const std::string &err)
     std::cerr << err << std::endl;
     exit(-1);
 }
-
-struct LegendSettings
-{
-    uint8_t index;
-    uint8_t place;
-    uint8_t merge[2];
-    enum : uint8_t {NO, SAME, UPPERCASE, LOWERCASE} mergeType = NO;
-    std::string color;
-};
-
-struct StateSettings
-{
-    std::string state;
-    std::string display;
-    std::string legend;
-    bool show;
-};
 
 int main(int argc, char **argv)
 {
@@ -164,10 +325,18 @@ int main(int argc, char **argv)
         numLegends = std::max<uint8_t>(numLegends, legendSettings[i].place + 1);
         if(mapJson.contains("color")) map.color = mapJson.at("color").get<std::string>();
     }
+    uint8_t numModifiers = settings.contains("modifiers") ? settings.at("modifiers").size() : 0;
+    for(uint8_t i = 0; i < numModifiers; i++)
+    {
+        nlohmann::json modifierJson = settings.at("modifiers").at(i);
+        uint8_t index = modifierJson.at("index").get<uint8_t>();
+        if(index >= modifierSettings.size()) modifierSettings.resize(index + 1);
+        modifierSettings[index].isUsed = true;
+        modifierSettings[index].prefix = modifierJson.at("prefix").get<std::string>();
+    }
     if(!settings.contains("states") || !settings.at("states").size()) error("Settings does not contain a non-empty "
             "states array");
     uint8_t numStates = settings.at("states").size();
-    std::vector<StateSettings> stateSettings;
     stateSettings.reserve(numStates);
     for(uint8_t i = 0; i < numStates; i++)
     {
@@ -184,12 +353,10 @@ int main(int argc, char **argv)
         if(stateJson.contains("show")) state.show = stateJson.at("show").get<bool>();
         else state.show = true;
     }
-    std::unordered_map<std::string, std::string> substitutions;
     if(settings.contains("substitutions"))
             substitutions = settings.at("substitutions").get<std::unordered_map<std::string, std::string>>();
     float stateDy = 0;
     if(settings.contains("stateDy")) stateDy = settings.at("stateDy").get<float>();
-    std::unordered_map<std::string, const StateSettings*> stateLookup;
     for(const StateSettings &state: stateSettings) stateLookup.emplace(std::make_pair(state.state, &state));
 
     // Keycodes of ISO keyboards, strings based on UK QWERTY
@@ -296,8 +463,8 @@ int main(int argc, char **argv)
                                     {
                                         const char *c;
                                         bool isDead;
-                                        std::tie(c, isDead) = keyOutput(keyCodeIt->second, usedKeyMapSet.c_str(),
-                                                state.state.c_str(), legendSettings[i].index);
+                                        std::tie(c, isDead) = keyOutput(usedKeyMapSet.c_str(), state.state.c_str(),
+                                                legendSettings[i].index, keyCodeIt->second);
                                         if(c && (!isDead || strcmp(c, state.state.c_str())))
                                         {
                                             keyNumLegends = std::max<uint8_t>(keyNumLegends,
@@ -311,8 +478,8 @@ int main(int argc, char **argv)
                                                 uint8_t numDead = 1;
                                                 while(numDead < 3)
                                                 {
-                                                    std::tie(c, isDead) = keyOutput(keyCodeIt->second,
-                                                            usedKeyMapSet.c_str(), c, legendSettings[i].index);
+                                                    std::tie(c, isDead) = keyOutput(usedKeyMapSet.c_str(), c,
+                                                            legendSettings[i].index, keyCodeIt->second);
                                                     if(isDead) deadKeyChain[numDead++] = c;
                                                     else break;
                                                 }
@@ -327,7 +494,7 @@ int main(int argc, char **argv)
                                                             legend += "<span class=\"nongraphic\">|</span>";
 
                                                 }
-                                                auto deadKeyLegend = [&stateLookup, &legend](const char *deadKeyStr)
+                                                auto deadKeyLegend = [&legend](const char *deadKeyStr)
                                                 {
                                                     const char *str = deadKeyStr;
                                                     auto stateIt = stateLookup.find(deadKeyStr);
@@ -494,6 +661,11 @@ int main(int argc, char **argv)
                                 case "PAGE"_hash:
                                     replace = true;
                                     replaceString = std::to_string(iState + 1);
+                                    break;
+                                case "PATH"_hash:
+                                    replace = true;
+                                    replaceString = statePath2String(usedKeyMapSet.c_str(),
+                                            findStatePath(usedKeyMapSet.c_str(), state.state.c_str()));
                                     break;
                                 case "STATE"_hash:
                                     replace = true;
