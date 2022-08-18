@@ -119,7 +119,7 @@ const char *actionState(const char *actionName)
     return "";
 }
 
-std::vector<std::vector<KeyWithLevel>> findStatePath(const char *mapName, const char *stateName,
+std::vector<std::vector<KeyWithLevel>> findStatePath(const char *mapName, const char *stateName, uint8_t depth,
         const std::unordered_set<std::string> &forbiddenStates = std::unordered_set<std::string>())
 {
     // Outer: multiple paths, inner: a path with multiple keys
@@ -131,81 +131,76 @@ std::vector<std::vector<KeyWithLevel>> findStatePath(const char *mapName, const 
     }
     std::unordered_set<std::string> newForbiddenStates = forbiddenStates;
     newForbiddenStates.insert(stateName);
-    auto findKeys = [mapName, stateName, &ret, &forbiddenStates, &newForbiddenStates](bool fromRoot)
+    ITERATE_CHILDREN(keyboardNode, keyMapSet, "keyMapSet")
     {
-        ITERATE_CHILDREN(keyboardNode, keyMapSet, "keyMapSet")
+        if(!keyMapSet->Attribute("id", mapName)) continue;
+        ITERATE_CHILDREN(keyMapSet, keyMap, "keyMap")
         {
-            if(!keyMapSet->Attribute("id", mapName)) continue;
-            ITERATE_CHILDREN(keyMapSet, keyMap, "keyMap")
+            uint8_t mapIndex = static_cast<uint8_t>(keyMap->IntAttribute("index"));
+            if(mapIndex >= modifierSettings.size() || !modifierSettings[mapIndex].isUsed) continue;
+            auto processKeyMap = [depth, mapName, stateName, &ret, &forbiddenStates, &newForbiddenStates]
+                    (const tinyxml2::XMLElement *keyMap, uint8_t mapIndex)
             {
-                uint8_t mapIndex = static_cast<uint8_t>(keyMap->IntAttribute("index"));
-                if(mapIndex >= modifierSettings.size() || !modifierSettings[mapIndex].isUsed) continue;
-                auto processKeyMap = [fromRoot, mapName, stateName, &ret, &forbiddenStates, &newForbiddenStates]
-                        (const tinyxml2::XMLElement *keyMap, uint8_t mapIndex)
+                ITERATE_CHILDREN(keyMap, key, "key")
                 {
-                    ITERATE_CHILDREN(keyMap, key, "key")
+                    uint8_t keyCode = static_cast<uint8_t>(key->IntAttribute("code"));
+                    if(key->Attribute("action"))
                     {
-                        uint8_t keyCode = static_cast<uint8_t>(key->IntAttribute("code"));
-                        if(key->Attribute("action"))
+                        const char *actionName = key->Attribute("action");
+                        if(depth == 0)
                         {
-                            const char *actionName = key->Attribute("action");
-                            if(fromRoot)
+                            const char *nextState = actionState(actionName);
+                            if(!strcmp(stateName, nextState))
                             {
-                                const char *nextState = actionState(actionName);
-                                if(!strcmp(stateName, nextState))
-                                {
-                                    std::vector<KeyWithLevel> newPath;
-                                    newPath.push_back(KeyWithLevel{mapIndex, keyCode});
-                                    ret.push_back(newPath);
-                                }
+                                std::vector<KeyWithLevel> newPath;
+                                newPath.push_back(KeyWithLevel{mapIndex, keyCode});
+                                ret.push_back(newPath);
                             }
-                            else
+                        }
+                        else
+                        {
+                            ITERATE_CHILDREN(actions, actionSet, "action")
                             {
-                                ITERATE_CHILDREN(actions, actionSet, "action")
+                                if(!actionSet->Attribute("id", actionName)) continue;
+                                ITERATE_CHILDREN(actionSet, action, "when")
                                 {
-                                    if(!actionSet->Attribute("id", actionName)) continue;
-                                    ITERATE_CHILDREN(actionSet, action, "when")
+                                    if(action->Attribute("state", "none")) continue;
+                                    if(forbiddenStates.count(action->Attribute("state"))) continue;
+                                    if(action->Attribute("output")) continue;
+                                    if(action->Attribute("next", stateName))
                                     {
-                                        if(action->Attribute("state", "none")) continue;
-                                        if(forbiddenStates.count(action->Attribute("state"))) continue;
-                                        if(action->Attribute("output")) continue;
-                                        if(action->Attribute("next", stateName))
+                                        std::vector<std::vector<KeyWithLevel>> paths =
+                                                findStatePath(mapName, action->Attribute("state"), depth - 1,
+                                                newForbiddenStates);
+                                        for(std::vector<KeyWithLevel> &vec : paths)
                                         {
-                                            std::vector<std::vector<KeyWithLevel>> paths =
-                                                    findStatePath(mapName, action->Attribute("state"),
-                                                    newForbiddenStates);
-                                            for(std::vector<KeyWithLevel> &vec : paths)
-                                            {
-                                                ret.push_back(std::move(vec));
-                                                ret.back().push_back(KeyWithLevel{mapIndex, keyCode});
-                                            }
+                                            ret.push_back(std::move(vec));
+                                            ret.back().push_back(KeyWithLevel{mapIndex, keyCode});
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                };
-                processKeyMap(keyMap, mapIndex);
-                const char *baseMapSet = keyMap->Attribute("baseMapSet");
-                if(baseMapSet)
+                }
+            };
+            processKeyMap(keyMap, mapIndex);
+            const char *baseMapSet = keyMap->Attribute("baseMapSet");
+            if(baseMapSet)
+            {
+                uint8_t baseIndex = static_cast<uint8_t>(keyMap->IntAttribute("baseIndex"));
+                ITERATE_CHILDREN(keyboardNode, baseKeyMapSet, "keyMapSet")
                 {
-                    uint8_t baseIndex = static_cast<uint8_t>(keyMap->IntAttribute("baseIndex"));
-                    ITERATE_CHILDREN(keyboardNode, baseKeyMapSet, "keyMapSet")
+                    if(!baseKeyMapSet->Attribute("id", baseMapSet)) continue;
+                    ITERATE_CHILDREN(baseKeyMapSet, baseKeyMap, "keyMap")
                     {
-                        if(!baseKeyMapSet->Attribute("id", baseMapSet)) continue;
-                        ITERATE_CHILDREN(baseKeyMapSet, baseKeyMap, "keyMap")
-                        {
-                            if(baseKeyMap->IntAttribute("index") != baseIndex) continue;
-                            processKeyMap(baseKeyMap, mapIndex);
-                        }
+                        if(baseKeyMap->IntAttribute("index") != baseIndex) continue;
+                        processKeyMap(baseKeyMap, mapIndex);
                     }
                 }
             }
         }
-    };
-    findKeys(true);
-    if(ret.empty()) findKeys(false);
+    }
     return ret;
 }
 
@@ -246,6 +241,17 @@ std::string statePath2String(const char *mapName, const std::vector<std::vector<
         ret += pathStr;
     }
     return ret;
+}
+
+std::string getStatePath(const char *mapName, const char *stateName)
+{
+    std::vector<std::vector<KeyWithLevel>> paths;
+    for(uint8_t i = 0; i < 5; i++)
+    {
+        paths = findStatePath(mapName, stateName, i);
+        if(!paths.empty()) break;
+    }
+    return statePath2String(mapName, paths);
 }
 
 void error(const std::string &err)
@@ -447,8 +453,7 @@ int main(int argc, char **argv)
             leftColumns[column] += "<p class=\"indexLeft\"><span class=\"legend\">" + state.legend
                     + "</span><span class=\"stateName\">" + state.display + "</span></p>";
             rightColumns[column] += "<p class=\"indexRight\"><span class=\"path\">"
-                    + statePath2String(usedKeyMapSet.c_str(),
-                    findStatePath(usedKeyMapSet.c_str(), state.state.c_str()))
+                    + getStatePath(usedKeyMapSet.c_str(), state.state.c_str())
                     + "</span><span class=\"pageNumber\">" + std::to_string(iState + 1) + "</span></p>";
             iState++;
         }
@@ -712,8 +717,7 @@ int main(int argc, char **argv)
                                         break;
                                     case "PATH"_hash:
                                         replace = true;
-                                        replaceString = statePath2String(usedKeyMapSet.c_str(),
-                                                findStatePath(usedKeyMapSet.c_str(), state.state.c_str()));
+                                        replaceString = getStatePath(usedKeyMapSet.c_str(), state.state.c_str());
                                         break;
                                     case "LEGEND"_hash:
                                     {
