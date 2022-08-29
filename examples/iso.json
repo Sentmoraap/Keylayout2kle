@@ -1,0 +1,150 @@
+[
+  {
+    "name": "ISO",
+    "css": ".flip_H{ display: inline-block;  -webkit-transform: scale(-1, 1);}\n.emoji {font-size:smaller;}\n.nongraphic { color:#006000;}\n.deadkey {color:#ff0000;}\n.deadkey2 {color:#8000ff;}\n\n.indexLeft {\n  background: inherit;\n  margin: 0 auto;\n  position: relative;\n  white-space: nowrap;\n}\n\n.indexRight {\n  background: inherit;\n  margin: 0 auto;\n  position: relative;\n}\n\n.indexLeft:before {\n  content: '';\n  position: absolute;\n  bottom: 0.2rem;\n  width: 100%;\n  height: 0;\n  border-bottom: 1px dotted;\n}\n\n.indexLeft>.legend:after { content: '\\2002';}\n.indexRight>.path:after { content: '\\2002';}"
+  },
+  [
+    {
+      "w": 15,
+      "d": true
+    },
+    "$PAGE\n$STATE\n$LEGEND\n$PATH"
+  ],
+  [
+    {
+      "t": "#404040"
+    },
+    "#`",
+    "#1",
+    "#2",
+    "#3",
+    "#4",
+    "#5",
+    "#6",
+    "#7",
+    "#8",
+    "#9",
+    "#0",
+    "#-",
+    "#=",
+    {
+      "t": "#000000",
+      "w": 2
+    },
+    "Backspace"
+  ],
+  [
+    {
+      "w": 1.5
+    },
+    "Tab",
+    {
+      "t": "#404040"
+    },
+    "#Q",
+    "#W",
+    "#E",
+    "#R",
+    "#T",
+    "#Y",
+    "#U",
+    "#I",
+    "#O",
+    "#P",
+    "#[",
+    "#]",
+    {
+      "x": 0.25,
+      "t": "#000000",
+      "w": 1.25,
+      "h": 2,
+      "w2": 1.5,
+      "h2": 1,
+      "x2": -0.25
+    },
+    "Enter"
+  ],
+  [
+    {
+      "w": 1.75
+    },
+    "Caps Lock",
+    {
+      "t": "#404040"
+    },
+    "#A",
+    "#S",
+    "#D",
+    "#F",
+    "#G",
+    "#H",
+    "#J",
+    "#K",
+    "#L",
+    "#;",
+    "#'",
+    "##"
+  ],
+  [
+    {
+      "t": "#000000",
+      "w": 1.25
+    },
+    "Shift",
+    {
+      "t": "#404040"
+    },
+    "#B/",
+    "#Z",
+    "#X",
+    "#C",
+    "#V",
+    "#B",
+    "#N",
+    "#M",
+    "#,",
+    "#.",
+    "#/",
+    {
+      "t": "#000000",
+      "w": 2.75
+    },
+    "Shift"
+  ],
+  [
+    {
+      "w": 1.25
+    },
+    "Ctrl",
+    {
+      "w": 1.25
+    },
+    "Win",
+    {
+      "w": 1.25
+    },
+    "Alt",
+    {
+      "t": "#404040",
+      "w": 6.25
+    },
+    "#SPACE",
+    {
+      "t": "#000000",
+      "w": 1.25
+    },
+    "AltGr",
+    {
+      "w": 1.25
+    },
+    "Win",
+    {
+      "w": 1.25
+    },
+    "Menu",
+    {
+      "w": 1.25
+    },
+    "Ctrl"
+  ]
+]
