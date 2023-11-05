@@ -264,8 +264,52 @@ int main(int argc, char **argv)
 {
     if(argc < 4)
     {
-        std::cerr << "Usage: " << argv[0] << "<keyLayout file> <kle json file> <settings json file>" << std::endl;
+        std::cerr << "    Usage: " << argv[0] << "<keyLayout file> <kle json file> <settings json file> [options]\n"
+                "\nOptions:\n\n"
+                "    --min-page <page>\n"
+                "    --max-page <page>\n" << std::endl;
         return -1;
+    }
+
+    uint8_t minPage = 0, maxPage = 254;
+    {
+        enum {NONE, MIN_PAGE, MAX_PAGE} state = NONE;
+        for(uint8_t i = 4; i < argc; i++) switch(state)
+        {
+            case NONE:
+            {
+                StrHash hash = StrHash::make(argv[i]);
+                switch(hash)
+                {
+                    case "--min-page"_hash:
+                        state = MIN_PAGE;
+                        break;
+                    case "--max-page"_hash:
+                        state = MAX_PAGE;
+                        break;
+                    default:
+                        std::cerr << "Unknown option " << argv[i] << std::endl;
+                        return -1;
+                }
+            }
+            break;
+            case MIN_PAGE:
+            {
+                long int val = strtol(argv[i], nullptr, 0);
+                if(val < 0 || val > 254) std::cerr << "--min-page: improprer argument" << std::endl;
+                minPage = static_cast<uint8_t>(val);
+                state = NONE;
+            }
+            break;
+            case MAX_PAGE:
+            {
+                long int val = strtol(argv[i], nullptr, 0);
+                if(val < 0 || val > 254) std::cerr << "--min-page: improprer argument" << std::endl;
+                maxPage = static_cast<uint8_t>(val);
+                state = NONE;
+            }
+            break;
+        }
     }
 
     tinyxml2::XMLDocument rootNode;
@@ -294,6 +338,7 @@ int main(int argc, char **argv)
     std::vector<LegendSettings> legendSettings;
     legendSettings.reserve(numMaps);
     uint8_t numLegends = 0;
+    bool placesUsed[16] = {};
     for(uint8_t i = 0; i < numMaps; i++)
     {
         const nlohmann::json &mapJson = settings.at("legends").at(i);
@@ -301,6 +346,7 @@ int main(int argc, char **argv)
         LegendSettings &map = legendSettings.back();
         if(!mapJson.contains("place")) error(std::string("maps[") + std::to_string(i) + "] does not contain a place");
         map.place = mapJson.at("place").get<uint8_t>();
+        placesUsed[map.place] = true;
         if(mapJson.contains("merge"))
         {
             map.mergeType = LegendSettings::SAME;
@@ -437,7 +483,7 @@ int main(int argc, char **argv)
 
     // Index
     float firstStateDy = 0.f;
-    if(hasIndex)
+    if(hasIndex && minPage == 0)
     {
         nlohmann::json outRow = nlohmann::json::array();
         uint8_t numShownStates = 0;
@@ -479,7 +525,7 @@ int main(int argc, char **argv)
         {
             if(!state.show) continue;
             bool firstRow = true;
-            for(const nlohmann::json &row : kleKeyboard)
+            if(iState + 1 >= minPage && iState < maxPage) for(const nlohmann::json &row : kleKeyboard)
             {
                 if(row.type() == nlohmann::json::value_t::array)
                 {
@@ -497,13 +543,27 @@ int main(int argc, char **argv)
                         if(str[0] == '#')
                         {
                             // Labels based on layout
+                            legends.clear();
+                            legends.resize(numLegends);
+                            colors.clear();
+                            colors.resize(numLegends);
+                            size_t strPos = -1;
+                            uint8_t arrayPos = 0;
+                            do
+                            {
+                                strPos++;
+                                size_t newStrPos = str.find("\n", strPos);
+                                legends[arrayPos++] = str.substr(strPos, newStrPos - strPos);
+                                strPos = newStrPos;
+                            } while(strPos != std::string::npos && arrayPos < numLegends);
+
+                            strPos = str.find("\n");
+                            if(strPos != std::string::npos) str.resize(strPos);
                             auto keyCodeIt = name2Keycode.find(str);
                             if(keyCodeIt != name2Keycode.end())
                             {
-                                legends.clear();
-                                legends.resize(numLegends);
-                                colors.clear();
-                                colors.resize(numLegends);
+                                legends[0] = "";
+
                                 uint8_t keyNumLegends = 0;
                                 uint8_t keyNumColors = 0;
 
@@ -633,54 +693,58 @@ int main(int argc, char **argv)
                                 str = "";
                                 for(uint8_t iLegend = 0; iLegend < keyNumLegends; iLegend++)
                                 {
-                                    std::string legend = legends[iLegend];
-                                    auto it = substitutions.find(legend);
-                                    if(it != substitutions.end()) legend = it->second;
-                                    icu::UnicodeString us(legend.c_str());
-                                    UErrorCode error = U_ZERO_ERROR;
-                                    icu::BreakIterator *bi = icu::BreakIterator::createCharacterInstance(
-                                            icu::Locale::getDefault(), error);
-                                    bi->setText(us);
-                                    // Add dotted circle on combining characters
-                                    if(us.countChar32() == 1)
+                                    if(placesUsed[iLegend])
                                     {
-                                        UChar32 c32 = us.char32At(0);
-                                        int8_t charCategory = u_charType(c32);
-                                        if(charCategory == U_NON_SPACING_MARK || charCategory == U_ENCLOSING_MARK
-                                            || charCategory == U_COMBINING_SPACING_MARK)
+                                        std::string legend = legends[iLegend];
+                                        auto it = substitutions.find(legend);
+                                        if(it != substitutions.end()) legend = it->second;
+                                        icu::UnicodeString us(legend.c_str());
+                                        UErrorCode error = U_ZERO_ERROR;
+                                        icu::BreakIterator *bi = icu::BreakIterator::createCharacterInstance(
+                                                icu::Locale::getDefault(), error);
+                                        bi->setText(us);
+                                        // Add dotted circle on combining characters
+                                        if(us.countChar32() == 1)
                                         {
-                                            us.insert(0, "</span>");
-                                            us.insert(0, 0x25cc);
-                                            us.insert(0, "<span class=\"nongraphic\">");
-                                            uint8_t combiningClass = u_getCombiningClass(c32);
-                                            // Double diacritic, append another dotted circle
-                                            if(combiningClass == 233 || combiningClass == 234) us.append(0x25cc);
+                                            UChar32 c32 = us.char32At(0);
+                                            int8_t charCategory = u_charType(c32);
+                                            if(charCategory == U_NON_SPACING_MARK || charCategory == U_ENCLOSING_MARK
+                                                || charCategory == U_COMBINING_SPACING_MARK)
+                                            {
+                                                us.insert(0, "</span>");
+                                                us.insert(0, 0x25cc);
+                                                us.insert(0, "<span class=\"nongraphic\">");
+                                                uint8_t combiningClass = u_getCombiningClass(c32);
+                                                // Double diacritic, append another dotted circle
+                                                if(combiningClass == 233 || combiningClass == 234) us.append(0x25cc);
+                                            }
+                                            if(!u_isgraph(c32) && nonGraphics.find(c32) == nonGraphics.end())
+                                            {
+                                                char charName[256];
+                                                u_charName(c32, U_UNICODE_CHAR_NAME, charName, 256, &error);
+                                                std::cerr << "Warning: character " << std::hex << c32
+                                                << " " << charName << " is non-graphic.";
+                                                if(nonGraphics.empty()) std::cerr << " Substitute this character to remove"
+                                                        " this warning.";
+                                                std::cerr << std::endl;
+                                                nonGraphics.insert(c32);
+                                            }
                                         }
-                                        if(!u_isgraph(c32) && nonGraphics.find(c32) == nonGraphics.end())
-                                        {
-                                            char charName[256];
-                                            u_charName(c32, U_UNICODE_CHAR_NAME, charName, 256, &error);
-                                            std::cerr << "Warning: character " << std::hex << c32
-                                            << " " << charName << " is non-graphic.";
-                                            if(nonGraphics.empty()) std::cerr << " Substitute this character to remove"
-                                                    " this warning.";
-                                            std::cerr << std::endl;
-                                            nonGraphics.insert(c32);
-                                        }
-                                    }
 
-                                    // Add <span> tags around emojis
-                                    for(int32_t p = bi->first(); p != icu::BreakIterator::DONE;)
-                                    {
-                                        int32_t next = bi->next();
-                                        int32_t n = next == icu::BreakIterator::DONE ? us.length() : next;
-                                        bool isEmoji = u_stringHasBinaryProperty(us.getBuffer() + p, n - p,
-                                                UCHAR_RGI_EMOJI);
-                                        if(isEmoji) str += "<span class=\"emoji\">";
-                                        us.tempSubString(p, n - p).toUTF8String<std::string>(str);
-                                        if(isEmoji) str += "</span>";
-                                        p = next;
+                                        // Add <span> tags around emojis
+                                        for(int32_t p = bi->first(); p != icu::BreakIterator::DONE;)
+                                        {
+                                            int32_t next = bi->next();
+                                            int32_t n = next == icu::BreakIterator::DONE ? us.length() : next;
+                                            bool isEmoji = u_stringHasBinaryProperty(us.getBuffer() + p, n - p,
+                                                    UCHAR_RGI_EMOJI);
+                                            if(isEmoji) str += "<span class=\"emoji\">";
+                                            us.tempSubString(p, n - p).toUTF8String<std::string>(str);
+                                            if(isEmoji) str += "</span>";
+                                            p = next;
+                                        }
                                     }
+                                    else str += legends[iLegend];
                                     str += '\n';
                                 }
                                 if(keyNumColors)
@@ -738,7 +802,7 @@ int main(int argc, char **argv)
 
                         if(firstElem && firstRow)
                         {
-                            if(iState)
+                            if(iState + 1 > std::max<int>(minPage, 1))
                             {
                                 keyProperties["y"] = stateDy;
                                 if(!keyProperties.contains("a")) keyProperties["a"] = 4;
